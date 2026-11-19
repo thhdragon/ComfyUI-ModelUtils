@@ -81,21 +81,13 @@ def dora_difference(cpu_a, cpu_b, device, *, keep_sources=False):
         if a.ndim < 2:
             result = (None, None, b, a)
             return result if keep_sources else result[:2]
-        is_conv = a.ndim == 4
-        if is_conv:
-            out_channels = a.shape[0]
-            norm_a = torch.linalg.norm(a.reshape(out_channels, -1), dim=1, keepdim=True)
-            norm_b = torch.linalg.norm(b.reshape(out_channels, -1), dim=1, keepdim=True)
-        else:
-            norm_a = torch.linalg.norm(a, dim=1, keepdim=True)
-            norm_b = torch.linalg.norm(b, dim=1, keepdim=True)
+        out_channels = a.shape[0]
+        norm_a = torch.linalg.norm(a.reshape(out_channels, -1), dim=1, keepdim=True)
+        norm_b = torch.linalg.norm(b.reshape(out_channels, -1), dim=1, keepdim=True)
         ratio = norm_b / (norm_a + 1e-8)
-        if is_conv:
-            ratio = ratio.view(-1, 1, 1, 1)
-            scale = norm_a.view(-1, 1, 1, 1)
-        else:
-            scale = norm_a
-        result = (a * ratio - b, scale, b, a)
+        view_shape = (-1,) + (1,) * (a.ndim - 1)
+        scale = norm_a.view(view_shape)
+        result = (a * ratio.view(view_shape) - b, scale, b, a)
         return result if keep_sources else result[:2]
 
     try:

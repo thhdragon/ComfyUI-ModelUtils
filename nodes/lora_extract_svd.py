@@ -329,19 +329,17 @@ def _svd_extract_conv(
     knee_probe_offset: int = 32,
 ) -> tuple:
     """
-    SVD decomposition for conv2d layers.
+    SVD decomposition for conv layers (1D, 2D, 3D).
 
     Returns:
         (lora_down, lora_up, rank), "low rank" or (weight, "full")
     """
-    out_ch, in_ch, kh, kw = weight.shape
-    is_1x1 = (kh == 1 and kw == 1)
+    out_ch = weight.shape[0]
+    in_ch = weight.shape[1]
+    kernel_size = weight.shape[2:]
 
     # Flatten for SVD
-    if is_1x1:
-        mat = weight.view(out_ch, in_ch)  # [out_ch, in_ch]
-    else:
-        mat = weight.reshape(out_ch, -1)  # [out_ch, in_ch*k*k]
+    mat = weight.reshape(out_ch, -1)
 
     result, mode_str = _svd_extract_linear(
         mat, mode, mode_param, device, max_rank, clamp_quantile,
@@ -355,12 +353,9 @@ def _svd_extract_conv(
     rank = lora_down.shape[0]
 
     # Reshape for conv
-    if is_1x1:
-        lora_down = lora_down.unsqueeze(-1).unsqueeze(-1)  # [rank, in_ch, 1, 1]
-        lora_up = lora_up.unsqueeze(-1).unsqueeze(-1)      # [out_ch, rank, 1, 1]
-    else:
-        lora_down = lora_down.reshape(rank, in_ch, kh, kw)
-        lora_up = lora_up.reshape(out_ch, rank, 1, 1)
+    ones_kernel = (1,) * len(kernel_size)
+    lora_down = lora_down.reshape(rank, in_ch, *kernel_size)
+    lora_up = lora_up.reshape(out_ch, rank, *ones_kernel)
 
     return (lora_down, lora_up, diff), "low rank"
 
@@ -735,7 +730,7 @@ def extract_lora_from_files(
                 del weight_diff
                 return "skipped", None
 
-            is_conv = weight_diff.ndim == 4
+            is_conv = weight_diff.ndim >= 3
             layer_results = {}
             svd_weight = weight_diff
 

@@ -112,9 +112,11 @@ def _optimize_dora(
     if optimize_iters <= 0:
         return init_down, init_up
 
-    is_conv = tensor_base.ndim == 4
+    is_conv = tensor_base.ndim >= 3
     if is_conv:
-        out_ch, in_ch, kh, kw = tensor_base.shape
+        out_ch = tensor_base.shape[0]
+        in_ch = tensor_base.shape[1]
+        kernel_size = tensor_base.shape[2:]
         flat_base = tensor_base.reshape(out_ch, -1)
         flat_ft = tensor_ft.reshape(out_ch, -1)
 
@@ -251,8 +253,9 @@ def _optimize_dora(
 
     # Reshape back to original dimensions
     if is_conv:
-        final_up = final_up.reshape(out_ch, rank, 1, 1)
-        final_down = final_down.reshape(rank, in_ch, kh, kw)
+        ones_kernel = (1,) * len(kernel_size)
+        final_up = final_up.reshape(out_ch, rank, *ones_kernel)
+        final_down = final_down.reshape(rank, in_ch, *kernel_size)
 
     return final_down, final_up
 
@@ -498,7 +501,7 @@ def extract_dora_learned_from_files(
                 del weight_diff, tensor_base, tensor_ft
                 return "skipped", None
 
-            is_conv = weight_diff.ndim == 4
+            is_conv = weight_diff.ndim >= 3
             layer_results = {}
             svd_weight = weight_diff
             optimize_base = tensor_base

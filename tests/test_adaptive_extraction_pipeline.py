@@ -379,3 +379,54 @@ def test_extraction_include_mode_selects_only_matching_layers(monkeypatch, tmp_p
     getattr(module, function_name)(str(first), str(second), "fixed", 1, 1, "cpu", "fp32", str(globbed), **common)
     with MemoryEfficientSafeOpen(str(globbed), low_memory=True) as result:
         assert list(result.keys()) == keys
+
+
+@pytest.mark.parametrize("module_name, function_name, extra", [
+    ("nodes.lora_extract_svd", "extract_lora_from_files", {"include_1d_diffs": False}),
+    ("nodes.dora_extract_wd", "extract_dora_from_files", {}),
+    ("nodes.dora_learned_wd", "extract_dora_learned_from_files", {"optimize_iters": 0}),
+    ("nodes.text_encoder_extract", "extract_te_from_files", {"is_dora": False}),
+    ("nodes.text_encoder_extract", "extract_te_from_files", {"is_dora": True}),
+])
+def test_extraction_supports_1d_conv_layers(monkeypatch, tmp_path, module_name, function_name, extra):
+    module = _load_module(module_name)
+    first, second = tmp_path / "first.safetensors", tmp_path / "second.safetensors"
+    key = "model.language_model.layers.0.linear_attn.conv1d.weight"
+    # 1D conv shape: (out_channels, in_channels, kernel_size)
+    t_a = torch.randn(8, 1, 4)
+    t_b = torch.randn(8, 1, 4)
+    _write_uel(first, {key: t_a})
+    _write_uel(second, {key: t_b})
+    monkeypatch.setattr(module, "prepare_for_large_operation", lambda *args: None)
+    monkeypatch.setattr(module, "cleanup_after_operation", lambda: None)
+
+    # 1. Low-rank extraction (rank 2 < 4)
+    output_lowrank = tmp_path / "output_lowrank.safetensors"
+    getattr(module, function_name)(
+        str(first), str(second), "fixed", 2, 2, "cpu", "fp32", str(output_lowrank),
+        linear_max_rank=2, conv_max_rank=2, force_clear_cache=False, **extra,
+    )
+    with MemoryEfficientSafeOpen(str(output_lowrank), low_memory=True) as result:
+        extracted_keys = set(result.keys())
+        assert any("lora_A" in k or "lora_down" in k for k in extracted_keys)
+        for k in extracted_keys:
+            shape = tuple(result.get_shape(k))
+            if "lora_A" in k or "lora_down" in k:
+                assert shape == (2, 1, 4)
+            elif "lora_B" in k or "lora_up" in k:
+                assert shape == (8, 2, 1)
+            elif "dora_scale" in k:
+                assert shape == (8, 1, 1)
+
+    # 2. Full rank fallback when rank >= min_dim (rank 4 >= 4)
+    output_full = tmp_path / "output_full.safetensors"
+    getattr(module, function_name)(
+        str(first), str(second), "fixed", 4, 4, "cpu", "fp32", str(output_full),
+        linear_max_rank=4, conv_max_rank=4, force_clear_cache=False, **extra,
+    )
+    with MemoryEfficientSafeOpen(str(output_full), low_memory=True) as result:
+        extracted_keys = list(result.keys())
+        assert len(extracted_keys) == 1
+        assert extracted_keys[0].endswith(".diff")
+        assert tuple(result.get_shape(extracted_keys[0])) == (8, 1, 4)
+

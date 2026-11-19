@@ -224,7 +224,7 @@ def extract_te_from_files(
                 del weight_diff
                 return "skipped", None
 
-            is_conv = weight_diff.ndim == 4
+            is_conv = weight_diff.ndim >= 3
             layer_results = {}
             svd_weight = weight_diff
 
